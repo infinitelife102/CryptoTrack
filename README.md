@@ -8,7 +8,7 @@ A real-time cryptocurrency market dashboard built with React 19 and TypeScript, 
 
 | Feature | Description |
 |---|---|
-| Market Dashboard | Live prices for the top 50 coins, auto-refreshed every 30 seconds |
+| Market Dashboard | Live prices for the top 50 coins, auto-refreshed every 60 seconds |
 | Coin Detail | Interactive price chart (1D / 7D / 30D / 1Y), market stats, ATH/ATL |
 | Portfolio Tracker | Add holdings with quantity and average buy price; track P&L in real time |
 | Favorites | Star any coin to filter the dashboard to your watchlist |
@@ -78,7 +78,7 @@ src/
 │   ├── alertStore.ts         # Price alerts CRUD (persisted)
 │   └── favoritesStore.ts     # Favorites list (persisted)
 ├── lib/
-│   └── coinGecko.ts          # API client with timeout + error handling
+│   └── coinGecko.ts          # API client: global queue, timeout, 429 retry, abort
 └── types/
     └── coin.ts               # TypeScript interfaces
 ```
@@ -100,7 +100,7 @@ npm install
 
 # Start development server
 npm run dev
-# → http://localhost:5173
+# → http://localhost:5174 (or the port Vite prints)
 
 # Production build
 npm run build
@@ -130,7 +130,15 @@ All data comes from the **CoinGecko Public API** (v3). No API key is required.
 | `/search` | Coin search by name/symbol |
 | `/simple/price` | Batch price lookup for portfolio holdings |
 
-> **Rate limit**: The free tier allows ~10–30 requests/min. The app auto-retries and surfaces clear error messages if the limit is hit.
+### Rate limit and queue
+
+The **free tier allows ~30 requests per minute** (see [CoinGecko docs](https://docs.coingecko.com/docs/common-errors-rate-limit)). To stay under this limit:
+
+- **Global request queue** (`src/lib/coinGecko.ts`): Every API call goes through a single queue. Only one request runs at a time, with a **minimum 2.2s gap** between starts (~27/min).
+- **Abort on navigation**: When you leave a page, in-flight requests for that page are cancelled so they don’t waste the limit.
+- **429 retry**: If the server returns “Too many requests”, the app retries with backoff (1.5s, then 4s) before showing an error.
+
+If you see a **CORS error** in the console (e.g. “No 'Access-Control-Allow-Origin' header”), it usually means the server returned **429** and didn’t send CORS headers on that error response. The underlying cause is rate limiting, not a CORS misconfiguration in the app.
 
 ---
 
@@ -156,7 +164,7 @@ Clearing browser storage resets all user data.
 - Price cells flash green (up) or red (down) when live data refreshes.
 - Tabs: **All** coins or **Favorites** only.
 - Last updated timestamp shown in the header row.
-- Auto-refreshes every **30 seconds**.
+- Auto-refreshes every **60 seconds**.
 
 ### 2. Coin Detail (`/coin/:id`)
 - Interactive **area chart** with 4 period buttons: 1D, 7D, 30D, 1Y.
@@ -185,17 +193,27 @@ Clearing browser storage resets all user data.
 - Persisted across sessions.
 
 ### 6. Global Market Stats (Header Bar)
-- Total Market Cap, 24h Volume, BTC Dominance — refreshed every 30 seconds.
+- Total Market Cap, 24h Volume, BTC Dominance — refreshed every 60 seconds.
 
 ---
 
 ## Error Handling
 
-All API calls include:
-- **15-second timeout** — shows "Request timed out" message.
-- **Network error detection** — shows "Network error. Check your internet connection."
-- **Rate limit (HTTP 429)** — shows "Too many requests. Please wait a minute."
+- **15-second timeout** — shows "Request timed out" if the server doesn’t respond in time.
+- **Network errors** — shows "Network error. Please check your internet connection or try again later."
+- **Rate limit (HTTP 429)** — retried automatically with backoff; if all retries fail, shows "Too many requests. Please wait a moment and try again."
+- **Abort on leave** — requests for a page are cancelled when you navigate away so they don’t count toward the limit or block the queue.
 - **Retry button** on all error banners.
+
+Background refresh failures (e.g. 429 after data has already loaded once) are ignored so the UI doesn’t flash error messages.
+
+---
+
+## Development notes
+
+- **Dashboard cache**: The coin list is cached at module level (`useCoins`). When you navigate back to the home page, the last list is shown immediately while a fresh request runs in the background.
+- **Staggered first fetch**: Global stats and coin-detail hooks delay their first request (800ms and 400ms) so they don’t all hit the queue at once on load.
+- **Error boundary**: A root `ErrorBoundary` catches render errors so a single component failure doesn’t blank the whole app.
 
 ---
 

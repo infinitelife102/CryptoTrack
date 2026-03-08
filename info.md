@@ -1,31 +1,30 @@
-Using Node.js 20, Tailwind CSS v3.4.19, and Vite v7.2.4
+# CryptoTrack — development info
 
-Tailwind CSS has been set up with the shadcn theme
+- **Runtime**: Node.js 18+ (recommended 20 LTS)
+- **Build**: Vite 7, Tailwind CSS 3.4, shadcn theme
+- **UI**: 40+ shadcn/ui components (button, card, dialog, etc.)
 
-Setup complete: /mnt/okcomputer/output/app
+## Structure
 
-Components (40+):
-  accordion, alert-dialog, alert, aspect-ratio, avatar, badge, breadcrumb,
-  button-group, button, calendar, card, carousel, chart, checkbox, collapsible,
-  command, context-menu, dialog, drawer, dropdown-menu, empty, field, form,
-  hover-card, input-group, input-otp, input, item, kbd, label, menubar,
-  navigation-menu, pagination, popover, progress, radio-group, resizable,
-  scroll-area, select, separator, sheet, sidebar, skeleton, slider, sonner,
-  spinner, switch, table, tabs, textarea, toggle-group, toggle, tooltip
+- `src/pages/` — HomePage, CoinDetailPage, PortfolioPage
+- `src/components/` — layout (Header, GlobalStats), dashboard (CoinTable, CoinRow), detail (PriceChart, CoinStats), portfolio, common (ErrorBanner, SkeletonRow, etc.), ui (shadcn)
+- `src/hooks/` — useCoins, useCoinDetail, usePriceChart, useGlobalData, usePriceAlert, useInterval, useDebounce
+- `src/store/` — portfolioStore, alertStore, favoritesStore (Zustand + persist)
+- `src/lib/coinGecko.ts` — CoinGecko API client with global rate-limited queue, timeout, 429 retry, AbortSignal support
+- `src/types/coin.ts` — TypeScript interfaces for API data
 
-Usage:
-  import { Button } from '@/components/ui/button'
-  import { Card, CardHeader, CardTitle } from '@/components/ui/card'
+## API (CoinGecko)
 
-Structure:
-  src/sections/        Page sections
-  src/hooks/           Custom hooks
-  src/types/           Type definitions
-  src/App.css          Styles specific to the Webapp
-  src/App.tsx          Root React component
-  src/index.css        Global styles
-  src/main.tsx         Entry point for rendering the Webapp
-  index.html           Entry point for the Webapp
-  tailwind.config.js   Configures Tailwind's theme, plugins, etc.
-  vite.config.ts       Main build and dev server settings for Vite
-  postcss.config.js    Config file for CSS post-processing tools
+- Public API v3, no key. Free tier ~30 requests/min.
+- All requests go through a single queue (min 2.2s between starts) to avoid 429.
+- Hooks pass AbortSignal so requests are cancelled on unmount or when dependencies change.
+
+## Commands
+
+```bash
+npm install
+npm run dev    # dev server
+npm run build
+npm run preview
+npm run lint
+```
