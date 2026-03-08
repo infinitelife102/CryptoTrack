@@ -3,6 +3,9 @@ import type { CoinDetail } from '@/types/coin';
 import { getCoinDetail } from '@/lib/coinGecko';
 import { useInterval } from './useInterval';
 
+// Stagger the first coin-detail fetch so it doesn't race with usePriceChart
+const INITIAL_DELAY_MS = 400;
+
 interface UseCoinDetailReturn {
   coin: CoinDetail | null;
   isLoading: boolean;
@@ -14,20 +17,39 @@ export function useCoinDetail(coinId: string): UseCoinDetailReturn {
   const [coin, setCoin] = useState<CoinDetail | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
+
   const hasFetchedOnce = useRef(false);
+  // Track the AbortController for the latest in-flight request
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchCoinDetail = useCallback(async (): Promise<void> => {
     if (!coinId) return;
 
-    try {
-      if (!hasFetchedOnce.current) setIsLoading(true);
-      setError(null);
+    // Cancel any previous in-flight request before starting a new one
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      const data = await getCoinDetail(coinId);
+    const isInitialLoad = !hasFetchedOnce.current;
+
+    try {
+      if (isInitialLoad) {
+        setIsLoading(true);
+        setError(null);
+      }
+
+      const data = await getCoinDetail(coinId, controller.signal);
+
       setCoin(data);
       hasFetchedOnce.current = true;
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'));
+      // AbortError means the component unmounted or coinId changed — ignore silently
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (isInitialLoad) {
+        setError(err instanceof Error ? err : new Error('Unknown error'));
+      }
+      // Background refresh failures are silently ignored
     } finally {
       setIsLoading(false);
     }
@@ -35,10 +57,21 @@ export function useCoinDetail(coinId: string): UseCoinDetailReturn {
 
   useEffect(() => {
     hasFetchedOnce.current = false;
-    fetchCoinDetail();
+
+    // Stagger the initial fetch to reduce concurrent requests on page load
+    const timer = setTimeout(() => {
+      fetchCoinDetail();
+    }, INITIAL_DELAY_MS);
+
+    return () => {
+      clearTimeout(timer);
+      // Abort any in-flight request when navigating away
+      abortRef.current?.abort();
+    };
   }, [fetchCoinDetail]);
 
-  useInterval(fetchCoinDetail, 30000);
+  // 60s background refresh
+  useInterval(fetchCoinDetail, 60000);
 
   return {
     coin,

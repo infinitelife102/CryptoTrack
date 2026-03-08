@@ -28,30 +28,47 @@ export function useCoins(): UseCoinsReturn {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const isFirstLoad = useRef(true);
-  // Track current coins in a ref so callbacks with empty deps can read the latest value
+  // Track current coins so callbacks with empty deps can read the latest value
   const coinsRef = useRef<CoinMarket[]>([]);
+  // Track the AbortController for the latest in-flight request
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchFirstPage = useCallback(async (): Promise<void> => {
+    const hasData = coinsRef.current.length > 0;
+
+    // Cancel any previous in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       if (isFirstLoad.current) {
         setIsLoading(true);
       }
-      setError(null);
-      const data = await getCoinsMarkets(PAGE_SIZE, 1);
+      if (!hasData) {
+        setError(null);
+      }
 
-      // Save the current coins as "previous" before replacing them
+      const data = await getCoinsMarkets(PAGE_SIZE, 1, controller.signal);
+
       const current = coinsRef.current;
       setPreviousCoins(current.length > 0 ? current.slice(0, PAGE_SIZE) : data);
 
-      // Keep any extra pages the user has loaded; only refresh page 1
-      const merged = current.length > PAGE_SIZE ? [...data, ...current.slice(PAGE_SIZE)] : data;
+      const merged =
+        current.length > PAGE_SIZE ? [...data, ...current.slice(PAGE_SIZE)] : data;
       setCoins(merged);
       coinsRef.current = merged;
 
+      setError(null);
       setPage(1);
       setLastUpdated(new Date());
     } catch (err) {
-      setError(err instanceof Error ? err : new Error('Unknown error'));
+      // AbortError means the component unmounted — ignore silently
+      if (err instanceof Error && err.name === 'AbortError') return;
+      if (!hasData) {
+        setError(err instanceof Error ? err : new Error('Unknown error'));
+      }
+      // Background refresh failures are silently ignored
     } finally {
       setIsLoading(false);
       isFirstLoad.current = false;
@@ -60,9 +77,15 @@ export function useCoins(): UseCoinsReturn {
 
   useEffect(() => {
     fetchFirstPage();
+
+    return () => {
+      // Abort the in-flight request when navigating away from the home page
+      abortRef.current?.abort();
+    };
   }, [fetchFirstPage]);
 
-  useInterval(fetchFirstPage, 30000);
+  // 60s background refresh
+  useInterval(fetchFirstPage, 60000);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (page >= MAX_PAGES) return;
@@ -81,6 +104,7 @@ export function useCoins(): UseCoinsReturn {
       setPage(nextPage);
       setLastUpdated(new Date());
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err : new Error('Unknown error'));
     } finally {
       setIsLoadingMore(false);

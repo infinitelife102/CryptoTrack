@@ -59,7 +59,7 @@ export function HomePage(): React.ReactElement {
       <footer className="border-t border-[#2d3148] bg-[#0f1117] py-6">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-[#94a3b8] sm:px-6 lg:px-8">
           <p>Data provided by CoinGecko API</p>
-          <p className="mt-1">Auto-refreshes every 30 seconds</p>
+          <p className="mt-1">Auto-refreshes every 60 seconds</p>
         </div>
       </footer>
     </div>
