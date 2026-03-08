@@ -36,11 +36,15 @@ export function usePriceChart(
       setData(chartData);
       setError(null);
     } catch (err) {
-      // AbortError means the component unmounted or the period changed — ignore silently
       if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err : new Error('Unknown error'));
     } finally {
-      setIsLoading(false);
+      // Only clear the loading spinner when the request was NOT aborted while
+      // there is no chart data yet — in that case the follow-up fetch (triggered
+      // by React StrictMode or a deps change) owns the loading state.
+      if (!controller.signal.aborted || data.length > 0) {
+        setIsLoading(false);
+      }
     }
   }, [coinId, days]);
 

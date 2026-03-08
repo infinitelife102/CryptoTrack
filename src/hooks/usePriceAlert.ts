@@ -29,7 +29,8 @@ export function usePriceAlert({ coins }: UsePriceAlertProps): void {
   const alertIdsKey = uniqueAlertCoinIds.join(',');
 
   const fetchAlertPrices = async (): Promise<void> => {
-    if (uniqueAlertCoinIds.length === 0) return;
+    // Don't fire extra requests until the main coin list has loaded
+    if (uniqueAlertCoinIds.length === 0 || coins.length === 0) return;
     try {
       const data = await getCoinsPrices(uniqueAlertCoinIds);
       const map: Record<string, number> = {};
@@ -46,7 +47,7 @@ export function usePriceAlert({ coins }: UsePriceAlertProps): void {
     fetchAlertPrices();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch when alert-only coin set changes
   }, [alertIdsKey]);
-  useInterval(fetchAlertPrices, 30000);
+  useInterval(fetchAlertPrices, 60000);
 
   const getCurrentPrice = (coinId: string): number | null => {
     const fromDashboard = coins.find((c) => c.id === coinId);

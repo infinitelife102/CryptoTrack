@@ -10,11 +10,79 @@ const BASE_URL = 'https://api.coingecko.com/api/v3';
 
 const FETCH_TIMEOUT_MS = 15000;
 
+/**
+ * CoinGecko Public API (free): ~30 requests per minute (varies with traffic).
+ * We serialize all requests and enforce a minimum gap so we stay under the limit.
+ * 2.2s between request starts ≈ 27/min so data appears sooner while staying under 30.
+ */
+const MIN_REQUEST_INTERVAL_MS = 2200;
+
 // Retry delays for 429 rate-limit responses
 const RETRY_DELAYS_MS = [1500, 4000] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --- Global rate-limited request queue (single-threaded) ---
+let lastRequestStartTime = 0;
+let queueProcessing = false;
+
+interface QueuedTask<T> {
+  run: () => Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+  signal?: AbortSignal;
+}
+
+const requestQueue: QueuedTask<unknown>[] = [];
+
+async function processQueue(): Promise<void> {
+  if (queueProcessing || requestQueue.length === 0) return;
+
+  const now = Date.now();
+  const elapsed = now - lastRequestStartTime;
+  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+    await sleep(MIN_REQUEST_INTERVAL_MS - elapsed);
+  }
+
+  const task = requestQueue.shift() as QueuedTask<unknown> | undefined;
+  if (!task) {
+    queueProcessing = false;
+    return;
+  }
+
+  if (task.signal?.aborted) {
+    task.reject(new DOMException('Aborted', 'AbortError'));
+    processQueue();
+    return;
+  }
+
+  queueProcessing = true;
+  lastRequestStartTime = Date.now();
+
+  try {
+    const result = await task.run();
+    task.resolve(result);
+  } catch (err) {
+    task.reject(err);
+  } finally {
+    queueProcessing = false;
+    processQueue();
+  }
+}
+
+/** Enqueue a single API call so we never exceed the rate limit. */
+function enqueue<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    requestQueue.push({
+      run: run as () => Promise<unknown>,
+      resolve: resolve as (value: unknown) => void,
+      reject,
+      signal,
+    });
+    processQueue();
+  });
 }
 
 function isNetworkError(err: unknown): boolean {
@@ -28,17 +96,10 @@ function isNetworkError(err: unknown): boolean {
 }
 
 /**
- * Core fetch wrapper.
- *
- * `signal` — caller-supplied AbortSignal (e.g. from a hook's AbortController).
- *   Aborting via this signal throws a DOMException with name 'AbortError' so
- *   hooks can detect the cancellation and ignore it silently.
- *
- * The internal timeout controller throws a friendly Error when it fires so the
- * user sees "Request timed out" rather than a raw AbortError.
+ * Core fetch logic (timeout, 429 retry, CORS/network errors).
+ * Called only from fetchAPI after the request has been dequeued.
  */
-async function fetchAPI<T>(endpoint: string, signal?: AbortSignal, attempt = 0): Promise<T> {
-  // Already cancelled before we even started
+async function doFetch<T>(endpoint: string, signal?: AbortSignal, attempt = 0): Promise<T> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   let isTimedOut = false;
@@ -48,7 +109,6 @@ async function fetchAPI<T>(endpoint: string, signal?: AbortSignal, attempt = 0):
     timeoutController.abort();
   }, FETCH_TIMEOUT_MS);
 
-  // Forward the caller's cancellation to our timeout controller
   const onCallerAbort = (): void => timeoutController.abort();
   signal?.addEventListener('abort', onCallerAbort, { once: true });
 
@@ -60,15 +120,13 @@ async function fetchAPI<T>(endpoint: string, signal?: AbortSignal, attempt = 0):
     clearTimeout(timeoutId);
     signal?.removeEventListener('abort', onCallerAbort);
 
-    // Caller cancelled after the response arrived but before we processed it
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     if (response.status === 429) {
       if (attempt < RETRY_DELAYS_MS.length) {
-        // Rate-limited — wait silently then retry
         await sleep(RETRY_DELAYS_MS[attempt]);
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-        return fetchAPI<T>(endpoint, signal, attempt + 1);
+        return doFetch<T>(endpoint, signal, attempt + 1);
       }
       throw new Error('Too many requests. Please wait a moment and try again.');
     }
@@ -84,15 +142,11 @@ async function fetchAPI<T>(endpoint: string, signal?: AbortSignal, attempt = 0):
 
     if (err instanceof Error && err.name === 'AbortError') {
       if (isTimedOut) {
-        // Our internal timeout fired → user-visible message
         throw new Error('Request timed out. Please check your connection and try again.');
       }
-      // Caller cancelled (component unmounting) → rethrow as AbortError
-      // so hooks can detect it and exit silently
       throw err;
     }
 
-    // Don't double-wrap errors that already have a friendly message
     if (
       err instanceof Error &&
       (err.message.startsWith('Too many requests') ||
@@ -111,6 +165,14 @@ async function fetchAPI<T>(endpoint: string, signal?: AbortSignal, attempt = 0):
 
     throw err;
   }
+}
+
+/**
+ * All CoinGecko requests go through this: first the global queue (rate limit),
+ * then doFetch (timeout, retry, errors). Abort is respected before and while in queue.
+ */
+async function fetchAPI<T>(endpoint: string, signal?: AbortSignal): Promise<T> {
+  return enqueue(() => doFetch<T>(endpoint, signal), signal) as Promise<T>;
 }
 
 export async function getCoinsMarkets(
