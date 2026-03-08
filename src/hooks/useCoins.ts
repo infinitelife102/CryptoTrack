@@ -26,7 +26,10 @@ export function useCoins(): UseCoinsReturn {
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
   const isFirstLoad = useRef(true);
+  // Track current coins in a ref so callbacks with empty deps can read the latest value
+  const coinsRef = useRef<CoinMarket[]>([]);
 
   const fetchFirstPage = useCallback(async (): Promise<void> => {
     try {
@@ -35,8 +38,16 @@ export function useCoins(): UseCoinsReturn {
       }
       setError(null);
       const data = await getCoinsMarkets(PAGE_SIZE, 1);
-      setPreviousCoins((prev) => (prev.length > 0 ? prev : data));
-      setCoins((prev) => (prev.length > PAGE_SIZE ? [...data, ...prev.slice(PAGE_SIZE)] : data));
+
+      // Save the current coins as "previous" before replacing them
+      const current = coinsRef.current;
+      setPreviousCoins(current.length > 0 ? current.slice(0, PAGE_SIZE) : data);
+
+      // Keep any extra pages the user has loaded; only refresh page 1
+      const merged = current.length > PAGE_SIZE ? [...data, ...current.slice(PAGE_SIZE)] : data;
+      setCoins(merged);
+      coinsRef.current = merged;
+
       setPage(1);
       setLastUpdated(new Date());
     } catch (err) {
@@ -60,10 +71,13 @@ export function useCoins(): UseCoinsReturn {
       setError(null);
       const nextPage = page + 1;
       const data = await getCoinsMarkets(PAGE_SIZE, nextPage);
-      setCoins((prev) => {
-        setPreviousCoins(prev);
-        return [...prev, ...data];
-      });
+
+      const current = coinsRef.current;
+      setPreviousCoins(current);
+      const merged = [...current, ...data];
+      setCoins(merged);
+      coinsRef.current = merged;
+
       setPage(nextPage);
       setLastUpdated(new Date());
     } catch (err) {

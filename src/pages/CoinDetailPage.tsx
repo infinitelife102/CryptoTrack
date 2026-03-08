@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Star } from 'lucide-react';
+import { ArrowLeft, Star, Trash2, RotateCcw } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { PriceChart } from '@/components/detail/PriceChart';
 import { CoinStats } from '@/components/detail/CoinStats';
@@ -12,33 +12,47 @@ import { useCoinDetail } from '@/hooks/useCoinDetail';
 import { usePriceChart } from '@/hooks/usePriceChart';
 import { useAlertStore } from '@/store/alertStore';
 import { useFavoritesStore } from '@/store/favoritesStore';
-import type { ChartPeriod, PriceAlert } from '@/types/coin';
-import { Trash2, RotateCcw } from 'lucide-react';
+import type { ChartPeriod } from '@/types/coin';
 
-function AlertListSection({ coinId, currentPrice }: { coinId: string; currentPrice: number }): React.ReactElement | null {
-  const alerts = useAlertStore((state) => state.alerts.filter((a) => a.coinId === coinId));
+function AlertListSection({
+  coinId,
+  currentPrice,
+}: {
+  coinId: string;
+  currentPrice: number;
+}): React.ReactElement | null {
+  const alerts = useAlertStore((state) => state.alerts);
   const removeAlert = useAlertStore((state) => state.removeAlert);
   const resetTriggered = useAlertStore((state) => state.resetTriggered);
-  if (alerts.length === 0) return null;
+
+  const coinAlerts = alerts.filter((a) => a.coinId === coinId);
+
+  if (coinAlerts.length === 0) return null;
 
   const formatPrice = (p: number): string =>
-    p >= 1 ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${p.toFixed(6)}`;
+    p >= 1
+      ? `$${p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : `$${p.toFixed(6)}`;
 
   return (
     <div className="mt-6">
       <h2 className="mb-4 text-lg font-semibold text-[#e2e8f0]">Your Alerts</h2>
       <div className="space-y-2">
-        {alerts.map((alert: PriceAlert) => (
+        {coinAlerts.map((alert) => (
           <div
             key={`${alert.coinId}-${alert.targetPrice}-${alert.direction}`}
             className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#2d3148] bg-[#1a1d27] px-4 py-3"
           >
             <div className="text-sm text-[#e2e8f0]">
               <span className="text-[#94a3b8]">When price goes </span>
-              <span className="font-medium">{alert.direction === 'above' ? 'above' : 'below'}</span>
+              <span className="font-medium">
+                {alert.direction === 'above' ? 'above' : 'below'}
+              </span>
               <span className="ml-1 font-medium">{formatPrice(alert.targetPrice)}</span>
               {alert.triggered && (
-                <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-400">Triggered</span>
+                <span className="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-400">
+                  Triggered
+                </span>
               )}
             </div>
             <div className="flex gap-2">
@@ -77,10 +91,18 @@ interface AlertModalProps {
   onClose: () => void;
 }
 
-function AlertModal({ coinId, coinName, currentPrice, isOpen, onClose }: AlertModalProps): React.ReactElement | null {
-  const [targetPrice, setTargetPrice] = useState<string>(currentPrice.toFixed(2));
+function AlertModal({
+  coinId,
+  coinName,
+  currentPrice,
+  isOpen,
+  onClose,
+}: AlertModalProps): React.ReactElement | null {
+  const [targetPrice, setTargetPrice] = useState<string>(
+    isFinite(currentPrice) ? currentPrice.toFixed(2) : '0.00'
+  );
   const [direction, setDirection] = useState<'above' | 'below'>('above');
-  const { addAlert } = useAlertStore();
+  const addAlert = useAlertStore((state) => state.addAlert);
 
   if (!isOpen) return null;
 
@@ -164,7 +186,7 @@ function AlertModal({ coinId, coinName, currentPrice, isOpen, onClose }: AlertMo
 
 export function CoinDetailPage(): React.ReactElement {
   const { id } = useParams<{ id: string }>();
-  const coinId = id || '';
+  const coinId = id ?? '';
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>(7);
   const [isAlertModalOpen, setIsAlertModalOpen] = useState<boolean>(false);
 
@@ -174,12 +196,19 @@ export function CoinDetailPage(): React.ReactElement {
     error: coinError,
     refetch: refetchCoin,
   } = useCoinDetail(coinId);
-  const { data: chartData, isLoading: isChartLoading, error: chartError, refetch: refetchChart } = usePriceChart(coinId, chartPeriod);
+
+  const {
+    data: chartData,
+    isLoading: isChartLoading,
+    error: chartError,
+    refetch: refetchChart,
+  } = usePriceChart(coinId, chartPeriod);
 
   const isFavorite = useFavoritesStore((state) => state.isFavorite(coinId));
   const toggleFavorite = useFavoritesStore((state) => state.toggleFavorite);
 
   const formatPrice = (price: number): string => {
+    if (!isFinite(price)) return '—';
     if (price >= 1) {
       return `$${price.toLocaleString(undefined, {
         minimumFractionDigits: 2,
@@ -211,8 +240,8 @@ export function CoinDetailPage(): React.ReactElement {
     );
   }
 
-  const currentPrice = coin.market_data.current_price.usd;
-  const priceChange24h = coin.market_data.price_change_percentage_24h;
+  const currentPrice = coin.market_data.current_price.usd ?? 0;
+  const priceChange24h = coin.market_data.price_change_percentage_24h ?? 0;
 
   return (
     <div className="min-h-screen bg-[#0f1117]">
@@ -229,7 +258,9 @@ export function CoinDetailPage(): React.ReactElement {
 
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src={coin.image.large} alt={coin.name} className="h-16 w-16 rounded-full" />
+            {coin.image?.large && (
+              <img src={coin.image.large} alt={coin.name} className="h-16 w-16 rounded-full" />
+            )}
             <div>
               <h1 className="text-2xl font-bold text-[#e2e8f0]">
                 {coin.name}
@@ -280,14 +311,20 @@ export function CoinDetailPage(): React.ReactElement {
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <PriceChangeBadge
             label="1h"
-            value={coin.market_data.price_change_percentage_1h_in_currency.usd}
+            value={coin.market_data.price_change_percentage_1h_in_currency?.usd ?? null}
           />
           <PriceChangeBadge
             label="24h"
-            value={coin.market_data.price_change_percentage_24h}
+            value={coin.market_data.price_change_percentage_24h ?? null}
           />
-          <PriceChangeBadge label="7d" value={coin.market_data.price_change_percentage_7d} />
-          <PriceChangeBadge label="30d" value={coin.market_data.price_change_percentage_30d} />
+          <PriceChangeBadge
+            label="7d"
+            value={coin.market_data.price_change_percentage_7d ?? null}
+          />
+          <PriceChangeBadge
+            label="30d"
+            value={coin.market_data.price_change_percentage_30d ?? null}
+          />
         </div>
 
         <div className="mb-6">

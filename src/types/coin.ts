@@ -54,10 +54,10 @@ export interface CoinDetail {
     circulating_supply: number;
     ath: { usd: number };
     atl: { usd: number };
-    price_change_percentage_1h_in_currency: { usd: number };
-    price_change_percentage_24h: number;
-    price_change_percentage_7d: number;
-    price_change_percentage_30d: number;
+    price_change_percentage_1h_in_currency: { usd: number } | null;
+    price_change_percentage_24h: number | null;
+    price_change_percentage_7d: number | null;
+    price_change_percentage_30d: number | null;
   };
 }
 
